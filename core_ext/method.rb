@@ -1,4 +1,13 @@
 module MethodModificationHelpers
+  def alter(&with)
+    redefine do |old|
+      lambda do |*a, &b|
+        with.call(a)
+        old.bound_to(self).call(*a, &b)
+      end
+    end
+  end
+
   def append(&with)
     redefine do |old|
       lambda do |*a, &b|
@@ -26,10 +35,72 @@ module MethodModificationHelpers
     end
   end
 
-  def catch(sym, &with)
+  def catch(sym, ret = nil, &with)
     redefine do |old|
       lambda do |*a, &b|
         catch(sym) { return old.bound_to(self).call(*a, &b) }.tap(&with)
+        ret
+      end
+    end
+  end
+
+  def chain(&with)
+    redefine do |old|
+      lambda do |*a, &b|
+        with.call *old.bound_to(self).call(*a, &b)
+      end
+    end
+  end
+
+  def tap_result(&block)
+    redefine do |old|
+      lambda do |*a, &b|
+        old.bound_to(self).call(*a, &b).tap(&block)
+      end
+    end
+  end
+
+  def trace(&with)
+    redefine do |old|
+      lambda do |*a, &b|
+        old = old.bound_to(self)
+        set_trace_func with
+        begin
+          old.call(*a, &b)
+        ensure
+          set_trace_func nil
+        end
+      end
+    end
+  end
+
+  def trace_static(&after)
+    redefine do |old|
+      lambda do |*a, &b|
+        trace = []
+        old = old.bound_to(self)
+        set_trace_func lambda { |*e| trace << e }
+        begin
+          old.call(*a, &b)
+        ensure
+          set_trace_func nil
+          after.call trace[1..-2]
+        end
+      end
+    end
+  end
+
+  def yield_to(y = nil, &block)
+    case y
+    when Fiber
+      block = lambda { |*args| y.transfer(*args) }
+    when lambda { |y| y.respond_to? :yield }
+      block = lambda { |*args| y.yield(*args) }
+    end
+
+    redefine do |old|
+      lambda do |*a|
+        old.bound_to(self).call(*a, &block)
       end
     end
   end
