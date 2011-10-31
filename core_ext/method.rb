@@ -1,4 +1,43 @@
+module MethodModificationHelpers
+  def append(&with)
+    redefine do |old|
+      lambda do |*a, &b|
+        ret = old.bound_to(self).call(*a, &b)
+        with.call(*a, &b)
+        ret
+      end
+    end
+  end
+
+  def benchmark(&with)
+    redefine do |old|
+      lambda do |*a, &b|
+        ret = nil
+        old = old.bound_to(self)
+
+        unless defined? Benchmark
+          return old.call(*a, &b)
+        end
+
+        Benchmark.measure { ret = old.call(*a, &b) }.tap(&with)
+
+        ret
+      end
+    end
+  end
+
+  def catch(sym, &with)
+    redefine do |old|
+      lambda do |*a, &b|
+        catch(sym) { return old.bound_to(self).call(*a, &b) }.tap(&with)
+      end
+    end
+  end
+end
+
 class Method
+  include MethodModificationHelpers
+
   def bound_to?(obj)
     obj.__id__ == receiver.__id__
   end
@@ -11,6 +50,10 @@ class Method
     cur = receiver.method(name).tap { |m| return self if m == self }
     cur.instance_variable_set :@_origin, cur.owner.__instance_method(sym) unless cur.owner == self.class
     cur
+  end
+
+  def curry
+    to_proc.curry(arity.tap { |a| break a.abs - 1 if a < 0 })
   end
 
   def origin
@@ -52,6 +95,17 @@ class Method
   alias_method :bind, :rebind
   alias_method :bound_to, :rebind
   alias_method :rebound_to, :rebind
+
+  def to_fiber(yield_to = nil, &block)
+    case yield_to
+    when Fiber
+      block = lambda { |*args| yield_to.transfer(*args) }
+    when lambda { |y| y.respond_to? :yield }
+      block = lambda { |*args| yield_to.yield(*args) }
+    end
+
+    Fiber.new { |*args| call(*args, &block) }
+  end
 
   def undefine_on_owner
     __undefine_on owner
