@@ -9,4 +9,8 @@ class Module
       m.instance_variable_set :@_receiver_class, self
     end
   end
+
+  def each_object(&block)
+    ObjectSpace.each_object(self, &block)
+  end
 end
